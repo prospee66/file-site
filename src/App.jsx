@@ -99,15 +99,6 @@ const ALLOWED_FILE_TYPES = [
   'video/mp4', 'video/webm', 'video/ogg'
 ]
 
-// Simple hash function for password (client-side only)
-const hashPassword = async (password) => {
-  const encoder = new TextEncoder()
-  const data = encoder.encode(password + 'life_goes_on_salt_2024')
-  const hashBuffer = await crypto.subtle.digest('SHA-256', data)
-  const hashArray = Array.from(new Uint8Array(hashBuffer))
-  return hashArray.map(b => b.toString(16).padStart(2, '0')).join('')
-}
-
 // Sanitize text to prevent XSS
 const sanitizeText = (text) => {
   if (typeof text !== 'string') return ''
@@ -145,13 +136,6 @@ const safeJSONParse = (data, fallback = []) => {
 }
 
 function App() {
-  const [isAuthenticated, setIsAuthenticated] = useState(false)
-  const [hasPassword, setHasPassword] = useState(false)
-  const [isLoading, setIsLoading] = useState(true)
-  const [password, setPassword] = useState('')
-  const [confirmPassword, setConfirmPassword] = useState('')
-  const [authError, setAuthError] = useState('')
-
   const [items, setItems] = useState([])
   const [noteText, setNoteText] = useState('')
   const [filter, setFilter] = useState('all')
@@ -166,86 +150,42 @@ function App() {
     setTimeout(() => setNotification(null), 3000)
   }, [])
 
-  // Check if password exists on mount - TRUE one time password
-  // Once password is set, user is ALWAYS logged in automatically
+  // Load items from IndexedDB on mount
   useEffect(() => {
-    const storedHash = localStorage.getItem('lifeGoesOnPasswordHash')
-
-    if (storedHash) {
-      setHasPassword(true)
-      // Auto-login if password exists - no need to enter again
-      setIsAuthenticated(true)
-    }
-    setIsLoading(false)
-  }, [])
-
-  // Handle password setup - ONE TIME ONLY
-  // After this, user is always logged in automatically
-  const handleSetupPassword = async (e) => {
-    e.preventDefault()
-    setAuthError('')
-
-    if (password.length < 4) {
-      setAuthError('Password must be at least 4 characters')
-      return
-    }
-
-    if (password !== confirmPassword) {
-      setAuthError('Passwords do not match')
-      return
-    }
-
-    try {
-      const hash = await hashPassword(password)
-      localStorage.setItem('lifeGoesOnPasswordHash', hash)
-      setHasPassword(true)
-      setIsAuthenticated(true)
-      setPassword('')
-      setConfirmPassword('')
-      showNotification('Welcome! You are now set up permanently.', 'success')
-    } catch (error) {
-      setAuthError('Error setting password. Please try again.')
-    }
-  }
-
-  // Load items from IndexedDB
-  useEffect(() => {
-    if (isAuthenticated) {
-      const loadItems = async () => {
-        try {
-          // Try to load from IndexedDB first
-          const dbItems = await loadItemsFromDB()
-          if (dbItems.length > 0) {
-            setItems(dbItems)
-          } else {
-            // Migrate from localStorage if exists
-            const savedItems = localStorage.getItem('myImportantItems')
-            if (savedItems) {
-              const parsed = safeJSONParse(savedItems, [])
-              setItems(parsed)
-              // Save to IndexedDB and clear localStorage
-              if (parsed.length > 0) {
-                await saveItemsToDB(parsed)
-                localStorage.removeItem('myImportantItems')
-                showNotification('Data migrated to new storage!', 'success')
-              }
+    const loadItems = async () => {
+      try {
+        // Try to load from IndexedDB first
+        const dbItems = await loadItemsFromDB()
+        if (dbItems.length > 0) {
+          setItems(dbItems)
+        } else {
+          // Migrate from localStorage if exists
+          const savedItems = localStorage.getItem('myImportantItems')
+          if (savedItems) {
+            const parsed = safeJSONParse(savedItems, [])
+            setItems(parsed)
+            // Save to IndexedDB and clear localStorage
+            if (parsed.length > 0) {
+              await saveItemsToDB(parsed)
+              localStorage.removeItem('myImportantItems')
+              showNotification('Data migrated to new storage!', 'success')
             }
           }
-          // Update storage info
-          const info = await getStorageEstimate()
-          setStorageInfo(info)
-        } catch (error) {
-          console.error('Error loading saved items:', error)
-          showNotification('Error loading saved items', 'error')
         }
+        // Update storage info
+        const info = await getStorageEstimate()
+        setStorageInfo(info)
+      } catch (error) {
+        console.error('Error loading saved items:', error)
+        showNotification('Error loading saved items', 'error')
       }
-      loadItems()
     }
-  }, [isAuthenticated, showNotification])
+    loadItems()
+  }, [showNotification])
 
   // Save items to IndexedDB
   useEffect(() => {
-    if (isAuthenticated && items.length >= 0) {
+    if (items.length >= 0) {
       const saveItems = async () => {
         setIsSaving(true)
         try {
@@ -263,7 +203,7 @@ function App() {
       const timeoutId = setTimeout(saveItems, 500)
       return () => clearTimeout(timeoutId)
     }
-  }, [items, isAuthenticated, showNotification])
+  }, [items, showNotification])
 
   // Validate file before upload
   const validateFile = (file) => {
@@ -481,72 +421,7 @@ function App() {
     return true
   })
 
-  // Loading screen
-  if (isLoading) {
-    return (
-      <div className="app">
-        <div className="auth-container">
-          <div className="auth-card">
-            <div className="loading-spinner"></div>
-            <p>Loading...</p>
-          </div>
-        </div>
-      </div>
-    )
-  }
-
-  // Password setup screen
-  if (!hasPassword) {
-    return (
-      <div className="app">
-        {notification && (
-          <div className={`notification ${notification.type}`}>
-            {notification.message}
-          </div>
-        )}
-        <div className="auth-container">
-          <div className="auth-card">
-            <h1 className="auth-title">✨ Life Goes On ✨</h1>
-            <p className="auth-subtitle">Set up a password to protect your files</p>
-
-            <form onSubmit={handleSetupPassword} className="auth-form">
-              <div className="input-group">
-                <label htmlFor="password">Create Password</label>
-                <input
-                  id="password"
-                  type="password"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  placeholder="Enter password"
-                  autoComplete="new-password"
-                />
-              </div>
-
-              <div className="input-group">
-                <label htmlFor="confirm-password">Confirm Password</label>
-                <input
-                  id="confirm-password"
-                  type="password"
-                  value={confirmPassword}
-                  onChange={(e) => setConfirmPassword(e.target.value)}
-                  placeholder="Confirm password"
-                  autoComplete="new-password"
-                />
-              </div>
-
-              {authError && <p className="auth-error">{authError}</p>}
-
-              <button type="submit" className="auth-button">
-                Set Password
-              </button>
-            </form>
-          </div>
-        </div>
-      </div>
-    )
-  }
-
-  // Main app - always authenticated after one-time password setup
+  // Main app - no authentication needed
   return (
     <div className="app">
       {notification && (
