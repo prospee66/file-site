@@ -422,15 +422,28 @@ function App() {
         return
       }
 
-      // Simple direct download using data URL
+      // Convert base64 to blob for reliable download
+      const parts = item.data.split(',')
+      const byteString = atob(parts[1])
+      const mimeType = parts[0].match(/:(.*?);/)?.[1] || item.fileType
+
+      const ab = new ArrayBuffer(byteString.length)
+      const ia = new Uint8Array(ab)
+      for (let i = 0; i < byteString.length; i++) {
+        ia[i] = byteString.charCodeAt(i)
+      }
+
+      const blob = new Blob([ab], { type: mimeType })
+      const url = URL.createObjectURL(blob)
+
       const link = document.createElement('a')
-      link.href = item.data
+      link.href = url
       link.download = item.name
-      link.style.display = 'none'
       document.body.appendChild(link)
       link.click()
       document.body.removeChild(link)
 
+      setTimeout(() => URL.revokeObjectURL(url), 100)
       showNotification('Download started!', 'success')
     } catch (error) {
       console.error('Download error:', error)
