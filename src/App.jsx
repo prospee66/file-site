@@ -670,7 +670,7 @@ function App() {
       <div className="controls">
         <div className="upload-section">
           <label htmlFor="file-upload" className="upload-button">
-            📤 Upload Files
+            Upload Files
             <input
               id="file-upload"
               type="file"
@@ -698,7 +698,7 @@ function App() {
             className="add-button"
             aria-label="Add note"
           >
-            ➕ Add Note
+            Add Note
           </button>
         </div>
       </div>
@@ -736,7 +736,7 @@ function App() {
             >
               <div className="item-header">
                 <div className="item-type-badge" aria-hidden="true">
-                  {item.type === 'file' ? '📁' : '📝'}
+                  {item.type === 'file' ? 'F' : 'N'}
                 </div>
                 <div className="item-actions">
                   <button
@@ -745,7 +745,7 @@ function App() {
                     title={item.important ? 'Remove from important' : 'Mark as important'}
                     aria-label={item.important ? 'Remove from important' : 'Mark as important'}
                   >
-                    {item.important ? '⭐' : '☆'}
+                    {item.important ? '★' : '☆'}
                   </button>
                   <button
                     onClick={() => deleteItem(item.id)}
@@ -753,7 +753,7 @@ function App() {
                     title="Delete"
                     aria-label="Delete item"
                   >
-                    🗑️
+                    X
                   </button>
                 </div>
               </div>
@@ -776,7 +776,7 @@ function App() {
                         className="view-btn"
                         aria-label={`View ${item.name}`}
                       >
-                        👁️ View
+                        View
                       </button>
                     )}
                     <button
@@ -784,14 +784,14 @@ function App() {
                       className="share-btn"
                       aria-label={`Share ${item.name}`}
                     >
-                      📤 Share
+                      Share
                     </button>
                     <button
                       onClick={() => downloadFile(item)}
                       className="download-btn"
                       aria-label={`Download ${item.name}`}
                     >
-                      ⬇️ Download
+                      Download
                     </button>
                   </div>
                 </div>
@@ -830,10 +830,10 @@ function App() {
             </div>
             <div className="viewer-footer">
               <button onClick={() => shareFile(viewingItem)} className="share-btn">
-                📤 Share
+                Share
               </button>
               <button onClick={() => downloadFile(viewingItem)} className="download-btn">
-                ⬇️ Download
+                Download
               </button>
               <button onClick={closeViewer} className="view-btn" style={{background: 'linear-gradient(135deg, #6b7280 0%, #4b5563 100%)'}}>
                 Close
