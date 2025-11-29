@@ -4,8 +4,87 @@ import './App.css'
 // Security constants
 const MAX_FILE_SIZE = 10 * 1024 * 1024 // 10MB limit
 const MAX_NOTE_LENGTH = 5000
-const MAX_ITEMS = 100
+const MAX_ITEMS = 500 // Increased limit with IndexedDB
 const SESSION_TIMEOUT = 30 * 60 * 1000 // 30 minutes
+
+// IndexedDB configuration
+const DB_NAME = 'LifeGoesOnDB'
+const DB_VERSION = 1
+const STORE_NAME = 'items'
+
+// IndexedDB helper functions
+const openDatabase = () => {
+  return new Promise((resolve, reject) => {
+    const request = indexedDB.open(DB_NAME, DB_VERSION)
+
+    request.onerror = () => reject(request.error)
+    request.onsuccess = () => resolve(request.result)
+
+    request.onupgradeneeded = (event) => {
+      const db = event.target.result
+      if (!db.objectStoreNames.contains(STORE_NAME)) {
+        db.createObjectStore(STORE_NAME, { keyPath: 'id' })
+      }
+    }
+  })
+}
+
+const saveItemsToDB = async (items) => {
+  const db = await openDatabase()
+  return new Promise((resolve, reject) => {
+    const transaction = db.transaction([STORE_NAME], 'readwrite')
+    const store = transaction.objectStore(STORE_NAME)
+
+    // Clear existing items and add new ones
+    const clearRequest = store.clear()
+
+    clearRequest.onsuccess = () => {
+      items.forEach(item => store.add(item))
+    }
+
+    transaction.oncomplete = () => {
+      db.close()
+      resolve()
+    }
+    transaction.onerror = () => {
+      db.close()
+      reject(transaction.error)
+    }
+  })
+}
+
+const loadItemsFromDB = async () => {
+  const db = await openDatabase()
+  return new Promise((resolve, reject) => {
+    const transaction = db.transaction([STORE_NAME], 'readonly')
+    const store = transaction.objectStore(STORE_NAME)
+    const request = store.getAll()
+
+    request.onsuccess = () => {
+      db.close()
+      // Sort by createdAt descending (newest first)
+      const items = request.result.sort((a, b) =>
+        new Date(b.createdAt) - new Date(a.createdAt)
+      )
+      resolve(items)
+    }
+    request.onerror = () => {
+      db.close()
+      reject(request.error)
+    }
+  })
+}
+
+const getStorageEstimate = async () => {
+  if (navigator.storage && navigator.storage.estimate) {
+    const estimate = await navigator.storage.estimate()
+    return {
+      used: estimate.usage || 0,
+      quota: estimate.quota || 0
+    }
+  }
+  return { used: 0, quota: 0 }
+}
 
 // Allowed file types for security
 const ALLOWED_FILE_TYPES = [
@@ -78,6 +157,8 @@ function App() {
   const [noteText, setNoteText] = useState('')
   const [filter, setFilter] = useState('all')
   const [notification, setNotification] = useState(null)
+  const [storageInfo, setStorageInfo] = useState({ used: 0, quota: 0 })
+  const [isSaving, setIsSaving] = useState(false)
 
   // Show notification
   const showNotification = useCallback((message, type = 'info') => {
@@ -176,33 +257,60 @@ function App() {
     showNotification('Logged out successfully', 'info')
   }
 
-  // Load items from localStorage securely
+  // Load items from IndexedDB
   useEffect(() => {
     if (isAuthenticated) {
-      try {
-        const savedItems = localStorage.getItem('myImportantItems')
-        if (savedItems) {
-          const parsed = safeJSONParse(savedItems, [])
-          setItems(parsed)
+      const loadItems = async () => {
+        try {
+          // Try to load from IndexedDB first
+          const dbItems = await loadItemsFromDB()
+          if (dbItems.length > 0) {
+            setItems(dbItems)
+          } else {
+            // Migrate from localStorage if exists
+            const savedItems = localStorage.getItem('myImportantItems')
+            if (savedItems) {
+              const parsed = safeJSONParse(savedItems, [])
+              setItems(parsed)
+              // Save to IndexedDB and clear localStorage
+              if (parsed.length > 0) {
+                await saveItemsToDB(parsed)
+                localStorage.removeItem('myImportantItems')
+                showNotification('Data migrated to new storage!', 'success')
+              }
+            }
+          }
+          // Update storage info
+          const info = await getStorageEstimate()
+          setStorageInfo(info)
+        } catch (error) {
+          console.error('Error loading saved items:', error)
+          showNotification('Error loading saved items', 'error')
         }
-      } catch (error) {
-        console.error('Error loading saved items:', error)
-        showNotification('Error loading saved items', 'error')
       }
+      loadItems()
     }
   }, [isAuthenticated, showNotification])
 
-  // Save items to localStorage
+  // Save items to IndexedDB
   useEffect(() => {
-    if (isAuthenticated) {
-      try {
-        localStorage.setItem('myImportantItems', JSON.stringify(items))
-      } catch (error) {
-        console.error('Error saving items:', error)
-        if (error.name === 'QuotaExceededError') {
-          showNotification('Storage full! Please delete some items.', 'error')
+    if (isAuthenticated && items.length >= 0) {
+      const saveItems = async () => {
+        setIsSaving(true)
+        try {
+          await saveItemsToDB(items)
+          const info = await getStorageEstimate()
+          setStorageInfo(info)
+        } catch (error) {
+          console.error('Error saving items:', error)
+          showNotification('Error saving items. Please try again.', 'error')
+        } finally {
+          setIsSaving(false)
         }
       }
+      // Debounce saving to avoid too many writes
+      const timeoutId = setTimeout(saveItems, 500)
+      return () => clearTimeout(timeoutId)
     }
   }, [items, isAuthenticated, showNotification])
 
@@ -452,6 +560,20 @@ function App() {
       <header className="header">
         <h1>✨ Life Goes On ✨</h1>
         <p>Store and organize everything important to you</p>
+        {storageInfo.quota > 0 && (
+          <div className="storage-indicator">
+            <div className="storage-bar">
+              <div
+                className="storage-used"
+                style={{ width: `${Math.min((storageInfo.used / storageInfo.quota) * 100, 100)}%` }}
+              />
+            </div>
+            <span className="storage-text">
+              {formatFileSize(storageInfo.used)} / {formatFileSize(storageInfo.quota)} used
+              {isSaving && ' • Saving...'}
+            </span>
+          </div>
+        )}
         <button onClick={handleLogout} className="logout-btn" title="Logout">
           Lock
         </button>
