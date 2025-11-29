@@ -416,16 +416,85 @@ function App() {
 
   const downloadFile = (item) => {
     try {
+      if (!item.data) {
+        showNotification('File data not available. File may be corrupted.', 'error')
+        return
+      }
+
+      // Create blob from base64 data
+      const base64Data = item.data.split(',')[1]
+      if (!base64Data) {
+        showNotification('Invalid file data format', 'error')
+        return
+      }
+
+      const byteCharacters = atob(base64Data)
+      const byteNumbers = new Array(byteCharacters.length)
+      for (let i = 0; i < byteCharacters.length; i++) {
+        byteNumbers[i] = byteCharacters.charCodeAt(i)
+      }
+      const byteArray = new Uint8Array(byteNumbers)
+      const blob = new Blob([byteArray], { type: item.fileType })
+
+      const url = URL.createObjectURL(blob)
       const link = document.createElement('a')
-      link.href = item.data
+      link.href = url
       link.download = item.name
       link.rel = 'noopener noreferrer'
       document.body.appendChild(link)
       link.click()
       document.body.removeChild(link)
+      URL.revokeObjectURL(url)
+
+      showNotification('Download started!', 'success')
     } catch (error) {
-      showNotification('Error downloading file', 'error')
+      console.error('Download error:', error)
+      showNotification('Error downloading file. File may be corrupted.', 'error')
     }
+  }
+
+  const viewFile = (item) => {
+    try {
+      if (!item.data) {
+        showNotification('File data not available', 'error')
+        return
+      }
+
+      // Open in new tab for viewing
+      const newWindow = window.open()
+      if (newWindow) {
+        newWindow.document.write(`
+          <!DOCTYPE html>
+          <html>
+            <head>
+              <title>${item.name}</title>
+              <style>
+                body { margin: 0; display: flex; justify-content: center; align-items: center; min-height: 100vh; background: #1a1a2e; }
+                img { max-width: 100%; max-height: 100vh; object-fit: contain; }
+                embed, iframe { width: 100%; height: 100vh; border: none; }
+              </style>
+            </head>
+            <body>
+              ${item.fileType.startsWith('image/')
+                ? `<img src="${item.data}" alt="${item.name}" />`
+                : item.fileType === 'application/pdf'
+                  ? `<embed src="${item.data}" type="application/pdf" />`
+                  : `<iframe src="${item.data}"></iframe>`
+              }
+            </body>
+          </html>
+        `)
+        newWindow.document.close()
+      } else {
+        showNotification('Popup blocked. Please allow popups to view files.', 'error')
+      }
+    } catch (error) {
+      showNotification('Error viewing file', 'error')
+    }
+  }
+
+  const isViewable = (fileType) => {
+    return fileType?.startsWith('image/') || fileType === 'application/pdf'
   }
 
   const formatFileSize = (bytes) => {
@@ -672,17 +741,33 @@ function App() {
 
               {item.type === 'file' ? (
                 <div className="file-content">
+                  {item.fileType?.startsWith('image/') && item.data && (
+                    <div className="image-preview" onClick={() => viewFile(item)}>
+                      <img src={item.data} alt={item.name} />
+                    </div>
+                  )}
                   <h3 className="item-title">{item.name}</h3>
                   <p className="file-info">
                     {formatFileSize(item.size)} • {item.fileType || 'Unknown type'}
                   </p>
-                  <button
-                    onClick={() => downloadFile(item)}
-                    className="download-btn"
-                    aria-label={`Download ${item.name}`}
-                  >
-                    ⬇️ Download
-                  </button>
+                  <div className="file-actions">
+                    {isViewable(item.fileType) && (
+                      <button
+                        onClick={() => viewFile(item)}
+                        className="view-btn"
+                        aria-label={`View ${item.name}`}
+                      >
+                        👁️ View
+                      </button>
+                    )}
+                    <button
+                      onClick={() => downloadFile(item)}
+                      className="download-btn"
+                      aria-label={`Download ${item.name}`}
+                    >
+                      ⬇️ Download
+                    </button>
+                  </div>
                 </div>
               ) : (
                 <div className="note-content">
