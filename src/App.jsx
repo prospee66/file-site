@@ -242,28 +242,20 @@ function App() {
     loadItems()
   }, [isUnlocked, showNotification])
 
-  // Save items to IndexedDB (only after initial load is complete)
-  useEffect(() => {
-    // Skip saving until initial load is done (using ref to avoid race conditions)
-    if (!initialLoadDone.current || !isUnlocked) return
-
-    const saveItems = async () => {
-      setIsSaving(true)
-      try {
-        await saveItemsToDB(items)
-        const info = await getStorageEstimate()
-        setStorageInfo(info)
-      } catch (error) {
-        console.error('Error saving items:', error)
-        showNotification('Error saving items. Please try again.', 'error')
-      } finally {
-        setIsSaving(false)
-      }
+  // Helper function to save items - called explicitly after user actions
+  const saveItems = useCallback(async (newItems) => {
+    setIsSaving(true)
+    try {
+      await saveItemsToDB(newItems)
+      const info = await getStorageEstimate()
+      setStorageInfo(info)
+    } catch (error) {
+      console.error('Error saving items:', error)
+      showNotification('Error saving items. Please try again.', 'error')
+    } finally {
+      setIsSaving(false)
     }
-    // Debounce saving to avoid too many writes
-    const timeoutId = setTimeout(saveItems, 500)
-    return () => clearTimeout(timeoutId)
-  }, [items, isUnlocked, showNotification])
+  }, [showNotification])
 
   // Validate file before upload
   const validateFile = (file) => {
@@ -309,7 +301,12 @@ function App() {
           important: false,
           createdAt: new Date().toISOString()
         }
-        setItems(prev => [newItem, ...prev])
+        setItems(prev => {
+          const newItems = [newItem, ...prev]
+          // Save immediately after adding
+          saveItems(newItems)
+          return newItems
+        })
         uploadedCount++
         if (uploadedCount === files.length) {
           showNotification(`${uploadedCount} file(s) uploaded successfully!`, 'success')
@@ -347,20 +344,33 @@ function App() {
       important: false,
       createdAt: new Date().toISOString()
     }
-    setItems(prev => [newItem, ...prev])
+    setItems(prev => {
+      const newItems = [newItem, ...prev]
+      saveItems(newItems)
+      return newItems
+    })
     setNoteText('')
     showNotification('Note added successfully!', 'success')
   }
 
   const toggleImportant = (id) => {
-    setItems(prev => prev.map(item =>
-      item.id === id ? { ...item, important: !item.important } : item
-    ))
+    setItems(prev => {
+      const newItems = prev.map(item =>
+        item.id === id ? { ...item, important: !item.important } : item
+      )
+      saveItems(newItems)
+      return newItems
+    })
   }
 
   const deleteItem = (id) => {
     if (window.confirm('Are you sure you want to delete this item?')) {
-      setItems(prev => prev.filter(item => item.id !== id))
+      setItems(prev => {
+        const newItems = prev.filter(item => item.id !== id)
+        // Pass true to force saving even if empty (user explicitly deleted)
+        saveItemsToDB(newItems, true)
+        return newItems
+      })
       showNotification('Item deleted', 'success')
     }
   }
