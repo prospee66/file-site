@@ -159,6 +159,7 @@ function App() {
   const [notification, setNotification] = useState(null)
   const [storageInfo, setStorageInfo] = useState({ used: 0, quota: 0 })
   const [isSaving, setIsSaving] = useState(false)
+  const [viewingItem, setViewingItem] = useState(null)
 
   // Show notification
   const showNotification = useCallback((message, type = 'info') => {
@@ -421,76 +422,32 @@ function App() {
         return
       }
 
-      // Create blob from base64 data
-      const base64Data = item.data.split(',')[1]
-      if (!base64Data) {
-        showNotification('Invalid file data format', 'error')
-        return
-      }
-
-      const byteCharacters = atob(base64Data)
-      const byteNumbers = new Array(byteCharacters.length)
-      for (let i = 0; i < byteCharacters.length; i++) {
-        byteNumbers[i] = byteCharacters.charCodeAt(i)
-      }
-      const byteArray = new Uint8Array(byteNumbers)
-      const blob = new Blob([byteArray], { type: item.fileType })
-
-      const url = URL.createObjectURL(blob)
+      // Simple direct download using data URL
       const link = document.createElement('a')
-      link.href = url
+      link.href = item.data
       link.download = item.name
-      link.rel = 'noopener noreferrer'
+      link.style.display = 'none'
       document.body.appendChild(link)
       link.click()
       document.body.removeChild(link)
-      URL.revokeObjectURL(url)
 
       showNotification('Download started!', 'success')
     } catch (error) {
       console.error('Download error:', error)
-      showNotification('Error downloading file. File may be corrupted.', 'error')
+      showNotification('Error downloading file.', 'error')
     }
   }
 
   const viewFile = (item) => {
-    try {
-      if (!item.data) {
-        showNotification('File data not available', 'error')
-        return
-      }
-
-      // Open in new tab for viewing
-      const newWindow = window.open()
-      if (newWindow) {
-        newWindow.document.write(`
-          <!DOCTYPE html>
-          <html>
-            <head>
-              <title>${item.name}</title>
-              <style>
-                body { margin: 0; display: flex; justify-content: center; align-items: center; min-height: 100vh; background: #1a1a2e; }
-                img { max-width: 100%; max-height: 100vh; object-fit: contain; }
-                embed, iframe { width: 100%; height: 100vh; border: none; }
-              </style>
-            </head>
-            <body>
-              ${item.fileType.startsWith('image/')
-                ? `<img src="${item.data}" alt="${item.name}" />`
-                : item.fileType === 'application/pdf'
-                  ? `<embed src="${item.data}" type="application/pdf" />`
-                  : `<iframe src="${item.data}"></iframe>`
-              }
-            </body>
-          </html>
-        `)
-        newWindow.document.close()
-      } else {
-        showNotification('Popup blocked. Please allow popups to view files.', 'error')
-      }
-    } catch (error) {
-      showNotification('Error viewing file', 'error')
+    if (!item.data) {
+      showNotification('File data not available', 'error')
+      return
     }
+    setViewingItem(item)
+  }
+
+  const closeViewer = () => {
+    setViewingItem(null)
   }
 
   const isViewable = (fileType) => {
@@ -784,6 +741,35 @@ function App() {
           ))
         )}
       </div>
+
+      {/* File Viewer Modal */}
+      {viewingItem && (
+        <div className="viewer-overlay" onClick={closeViewer}>
+          <div className="viewer-container" onClick={(e) => e.stopPropagation()}>
+            <div className="viewer-header">
+              <h3>{viewingItem.name}</h3>
+              <button className="viewer-close" onClick={closeViewer}>✕</button>
+            </div>
+            <div className="viewer-content">
+              {viewingItem.fileType?.startsWith('image/') ? (
+                <img src={viewingItem.data} alt={viewingItem.name} />
+              ) : viewingItem.fileType === 'application/pdf' ? (
+                <iframe src={viewingItem.data} title={viewingItem.name} />
+              ) : (
+                <p>Preview not available for this file type</p>
+              )}
+            </div>
+            <div className="viewer-footer">
+              <button onClick={() => downloadFile(viewingItem)} className="download-btn">
+                ⬇️ Download
+              </button>
+              <button onClick={closeViewer} className="view-btn" style={{background: 'linear-gradient(135deg, #6b7280 0%, #4b5563 100%)'}}>
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
