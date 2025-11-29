@@ -31,8 +31,27 @@ const openDatabase = () => {
   })
 }
 
-const saveItemsToDB = async (items) => {
+const saveItemsToDB = async (items, forceEmpty = false) => {
   const db = await openDatabase()
+
+  // Safety check: if trying to save empty array, verify there's no existing data first
+  if (items.length === 0 && !forceEmpty) {
+    const existingCount = await new Promise((resolve) => {
+      const transaction = db.transaction([STORE_NAME], 'readonly')
+      const store = transaction.objectStore(STORE_NAME)
+      const countRequest = store.count()
+      countRequest.onsuccess = () => resolve(countRequest.result)
+      countRequest.onerror = () => resolve(0)
+    })
+
+    // Don't overwrite existing data with empty array
+    if (existingCount > 0) {
+      console.log('Prevented saving empty array over existing data')
+      db.close()
+      return
+    }
+  }
+
   return new Promise((resolve, reject) => {
     const transaction = db.transaction([STORE_NAME], 'readwrite')
     const store = transaction.objectStore(STORE_NAME)
