@@ -125,6 +125,17 @@ const getStorageEstimate = async () => {
   return { used: 0, quota: 0 }
 }
 
+// Request persistent storage to prevent browser from clearing data
+const requestPersistentStorage = async () => {
+  if (navigator.storage && navigator.storage.persist) {
+    const isPersisted = await navigator.storage.persisted()
+    if (!isPersisted) {
+      const granted = await navigator.storage.persist()
+      console.log('Persistent storage:', granted ? 'granted' : 'denied')
+    }
+  }
+}
+
 // Allowed file types for security
 const ALLOWED_FILE_TYPES = [
   'image/jpeg', 'image/png', 'image/gif', 'image/webp', 'image/svg+xml',
@@ -226,6 +237,9 @@ function App() {
 
     const loadItems = async () => {
       try {
+        // Request persistent storage on mobile to prevent data loss
+        await requestPersistentStorage()
+
         // Try to load from IndexedDB first
         const dbItems = await loadItemsFromDB()
         if (dbItems.length > 0) {
