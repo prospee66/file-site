@@ -166,22 +166,21 @@ function App() {
     setTimeout(() => setNotification(null), 3000)
   }, [])
 
-  // Check if password exists on mount - one time password setup
+  // Check if password exists on mount - TRUE one time password
+  // Once password is set, user is ALWAYS logged in automatically
   useEffect(() => {
     const storedHash = localStorage.getItem('lifeGoesOnPasswordHash')
-    const isLoggedIn = localStorage.getItem('lifeGoesOnLoggedIn')
 
     if (storedHash) {
       setHasPassword(true)
-      // Stay logged in permanently after password setup
-      if (isLoggedIn === 'true') {
-        setIsAuthenticated(true)
-      }
+      // Auto-login if password exists - no need to enter again
+      setIsAuthenticated(true)
     }
     setIsLoading(false)
   }, [])
 
-  // Handle password setup - one time only
+  // Handle password setup - ONE TIME ONLY
+  // After this, user is always logged in automatically
   const handleSetupPassword = async (e) => {
     e.preventDefault()
     setAuthError('')
@@ -199,49 +198,14 @@ function App() {
     try {
       const hash = await hashPassword(password)
       localStorage.setItem('lifeGoesOnPasswordHash', hash)
-      localStorage.setItem('lifeGoesOnLoggedIn', 'true')
       setHasPassword(true)
       setIsAuthenticated(true)
       setPassword('')
       setConfirmPassword('')
-      showNotification('Password set! You are now logged in permanently.', 'success')
+      showNotification('Welcome! You are now set up permanently.', 'success')
     } catch (error) {
       setAuthError('Error setting password. Please try again.')
     }
-  }
-
-  // Handle login
-  const handleLogin = async (e) => {
-    e.preventDefault()
-    setAuthError('')
-
-    if (!password) {
-      setAuthError('Please enter your password')
-      return
-    }
-
-    try {
-      const hash = await hashPassword(password)
-      const storedHash = localStorage.getItem('lifeGoesOnPasswordHash')
-
-      if (hash === storedHash) {
-        localStorage.setItem('lifeGoesOnLoggedIn', 'true')
-        setIsAuthenticated(true)
-        setPassword('')
-        showNotification('Welcome back!', 'success')
-      } else {
-        setAuthError('Incorrect password')
-      }
-    } catch (error) {
-      setAuthError('Error logging in. Please try again.')
-    }
-  }
-
-  // Handle logout (manual lock)
-  const handleLogout = () => {
-    localStorage.setItem('lifeGoesOnLoggedIn', 'false')
-    setIsAuthenticated(false)
-    showNotification('Locked successfully', 'info')
   }
 
   // Load items from IndexedDB
@@ -582,47 +546,7 @@ function App() {
     )
   }
 
-  // Login screen
-  if (!isAuthenticated) {
-    return (
-      <div className="app">
-        {notification && (
-          <div className={`notification ${notification.type}`}>
-            {notification.message}
-          </div>
-        )}
-        <div className="auth-container">
-          <div className="auth-card">
-            <h1 className="auth-title">✨ Life Goes On ✨</h1>
-            <p className="auth-subtitle">Enter your password to continue</p>
-
-            <form onSubmit={handleLogin} className="auth-form">
-              <div className="input-group">
-                <label htmlFor="login-password">Password</label>
-                <input
-                  id="login-password"
-                  type="password"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  placeholder="Enter your password"
-                  autoComplete="current-password"
-                  autoFocus
-                />
-              </div>
-
-              {authError && <p className="auth-error">{authError}</p>}
-
-              <button type="submit" className="auth-button">
-                Unlock
-              </button>
-            </form>
-          </div>
-        </div>
-      </div>
-    )
-  }
-
-  // Main app (authenticated)
+  // Main app - always authenticated after one-time password setup
   return (
     <div className="app">
       {notification && (
@@ -648,9 +572,6 @@ function App() {
             </span>
           </div>
         )}
-        <button onClick={handleLogout} className="logout-btn" title="Logout">
-          Lock
-        </button>
       </header>
 
       <div className="controls">
