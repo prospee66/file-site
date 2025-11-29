@@ -5,7 +5,6 @@ import './App.css'
 const MAX_FILE_SIZE = 10 * 1024 * 1024 // 10MB limit
 const MAX_NOTE_LENGTH = 5000
 const MAX_ITEMS = 500 // Increased limit with IndexedDB
-const SESSION_TIMEOUT = 30 * 60 * 1000 // 30 minutes
 
 // IndexedDB configuration
 const DB_NAME = 'LifeGoesOnDB'
@@ -167,35 +166,22 @@ function App() {
     setTimeout(() => setNotification(null), 3000)
   }, [])
 
-  // Check if password exists on mount
+  // Check if password exists on mount - one time password setup
   useEffect(() => {
     const storedHash = localStorage.getItem('lifeGoesOnPasswordHash')
-    const sessionTime = sessionStorage.getItem('lifeGoesOnSession')
+    const isLoggedIn = localStorage.getItem('lifeGoesOnLoggedIn')
 
     if (storedHash) {
       setHasPassword(true)
-      // Check if session is still valid
-      if (sessionTime && Date.now() - parseInt(sessionTime) < SESSION_TIMEOUT) {
+      // Stay logged in permanently after password setup
+      if (isLoggedIn === 'true') {
         setIsAuthenticated(true)
       }
     }
     setIsLoading(false)
   }, [])
 
-  // Update session time on activity
-  useEffect(() => {
-    if (isAuthenticated) {
-      const updateSession = () => {
-        sessionStorage.setItem('lifeGoesOnSession', Date.now().toString())
-      }
-      updateSession()
-
-      const interval = setInterval(updateSession, 60000) // Update every minute
-      return () => clearInterval(interval)
-    }
-  }, [isAuthenticated])
-
-  // Handle password setup
+  // Handle password setup - one time only
   const handleSetupPassword = async (e) => {
     e.preventDefault()
     setAuthError('')
@@ -213,12 +199,12 @@ function App() {
     try {
       const hash = await hashPassword(password)
       localStorage.setItem('lifeGoesOnPasswordHash', hash)
-      sessionStorage.setItem('lifeGoesOnSession', Date.now().toString())
+      localStorage.setItem('lifeGoesOnLoggedIn', 'true')
       setHasPassword(true)
       setIsAuthenticated(true)
       setPassword('')
       setConfirmPassword('')
-      showNotification('Password set successfully!', 'success')
+      showNotification('Password set! You are now logged in permanently.', 'success')
     } catch (error) {
       setAuthError('Error setting password. Please try again.')
     }
@@ -239,7 +225,7 @@ function App() {
       const storedHash = localStorage.getItem('lifeGoesOnPasswordHash')
 
       if (hash === storedHash) {
-        sessionStorage.setItem('lifeGoesOnSession', Date.now().toString())
+        localStorage.setItem('lifeGoesOnLoggedIn', 'true')
         setIsAuthenticated(true)
         setPassword('')
         showNotification('Welcome back!', 'success')
@@ -251,11 +237,11 @@ function App() {
     }
   }
 
-  // Handle logout
+  // Handle logout (manual lock)
   const handleLogout = () => {
-    sessionStorage.removeItem('lifeGoesOnSession')
+    localStorage.setItem('lifeGoesOnLoggedIn', 'false')
     setIsAuthenticated(false)
-    showNotification('Logged out successfully', 'info')
+    showNotification('Locked successfully', 'info')
   }
 
   // Load items from IndexedDB
