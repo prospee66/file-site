@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import './App.css'
 
 // Security constants
@@ -142,7 +142,9 @@ function App() {
   const [isUnlocked, setIsUnlocked] = useState(false)
   const [password, setPassword] = useState('')
   const [authError, setAuthError] = useState('')
-  const [hasLoaded, setHasLoaded] = useState(false)
+
+  // Use ref to track if initial load is complete (survives re-renders without triggering effects)
+  const initialLoadDone = useRef(false)
 
   const [items, setItems] = useState([])
   const [noteText, setNoteText] = useState('')
@@ -208,12 +210,14 @@ function App() {
         // Update storage info
         const info = await getStorageEstimate()
         setStorageInfo(info)
-        // Mark as loaded so save effect can run
-        setHasLoaded(true)
       } catch (error) {
         console.error('Error loading saved items:', error)
         showNotification('Error loading saved items', 'error')
-        setHasLoaded(true) // Still mark as loaded to allow new items
+      } finally {
+        // Mark initial load as complete AFTER a small delay to ensure state is settled
+        setTimeout(() => {
+          initialLoadDone.current = true
+        }, 100)
       }
     }
     loadItems()
@@ -221,7 +225,8 @@ function App() {
 
   // Save items to IndexedDB (only after initial load is complete)
   useEffect(() => {
-    if (!hasLoaded || !isUnlocked) return
+    // Skip saving until initial load is done (using ref to avoid race conditions)
+    if (!initialLoadDone.current || !isUnlocked) return
 
     const saveItems = async () => {
       setIsSaving(true)
@@ -239,7 +244,7 @@ function App() {
     // Debounce saving to avoid too many writes
     const timeoutId = setTimeout(saveItems, 500)
     return () => clearTimeout(timeoutId)
-  }, [items, hasLoaded, isUnlocked, showNotification])
+  }, [items, isUnlocked, showNotification])
 
   // Validate file before upload
   const validateFile = (file) => {
