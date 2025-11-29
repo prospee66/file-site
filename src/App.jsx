@@ -1,5 +1,12 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import './App.css'
+import {
+  saveItemToCloud,
+  loadItemsFromCloud,
+  deleteItemFromCloud,
+  subscribeToItems,
+  checkFirebaseConfig
+} from './firebase'
 
 // Security constants
 const MAX_FILE_SIZE = 10 * 1024 * 1024 // 10MB limit
@@ -9,12 +16,12 @@ const MAX_ITEMS = 500 // Increased limit with IndexedDB
 // Secret password (hardcoded for reliability)
 const SECRET_PASSWORD = 'prospee123@'
 
-// IndexedDB configuration
+// IndexedDB configuration (for offline fallback)
 const DB_NAME = 'LifeGoesOnDB'
 const DB_VERSION = 1
 const STORE_NAME = 'items'
 
-// IndexedDB helper functions
+// IndexedDB helper functions (kept for offline support)
 const openDatabase = () => {
   return new Promise((resolve, reject) => {
     const request = indexedDB.open(DB_NAME, DB_VERSION)
@@ -32,12 +39,11 @@ const openDatabase = () => {
 }
 
 const saveItemsToDB = async (items, forceEmpty = false) => {
-  console.log('=== SAVING TO DB ===', { itemCount: items.length, forceEmpty })
+  console.log('=== SAVING TO LOCAL DB ===', { itemCount: items.length, forceEmpty })
 
   try {
     const db = await openDatabase()
 
-    // Safety check: if trying to save empty array, verify there's no existing data first
     if (items.length === 0 && !forceEmpty) {
       const existingCount = await new Promise((resolve) => {
         const transaction = db.transaction([STORE_NAME], 'readonly')
@@ -47,7 +53,6 @@ const saveItemsToDB = async (items, forceEmpty = false) => {
         countRequest.onerror = () => resolve(0)
       })
 
-      // Don't overwrite existing data with empty array
       if (existingCount > 0) {
         console.log('Prevented saving empty array over existing data')
         db.close()
@@ -59,7 +64,6 @@ const saveItemsToDB = async (items, forceEmpty = false) => {
       const transaction = db.transaction([STORE_NAME], 'readwrite')
       const store = transaction.objectStore(STORE_NAME)
 
-      // Clear existing items and add new ones
       const clearRequest = store.clear()
 
       clearRequest.onsuccess = () => {
@@ -67,24 +71,24 @@ const saveItemsToDB = async (items, forceEmpty = false) => {
       }
 
       transaction.oncomplete = () => {
-        console.log('=== SAVE COMPLETE ===', { savedCount: items.length })
+        console.log('=== LOCAL SAVE COMPLETE ===', { savedCount: items.length })
         db.close()
         resolve()
       }
       transaction.onerror = () => {
-        console.error('=== SAVE ERROR ===', transaction.error)
+        console.error('=== LOCAL SAVE ERROR ===', transaction.error)
         db.close()
         reject(transaction.error)
       }
     })
   } catch (error) {
-    console.error('=== SAVE FAILED ===', error)
+    console.error('=== LOCAL SAVE FAILED ===', error)
     throw error
   }
 }
 
 const loadItemsFromDB = async () => {
-  console.log('=== LOADING FROM DB ===')
+  console.log('=== LOADING FROM LOCAL DB ===')
   try {
     const db = await openDatabase()
     const items = await new Promise((resolve, reject) => {
@@ -94,22 +98,21 @@ const loadItemsFromDB = async () => {
 
       request.onsuccess = () => {
         db.close()
-        // Sort by createdAt descending (newest first)
         const items = request.result.sort((a, b) =>
           new Date(b.createdAt) - new Date(a.createdAt)
         )
-        console.log('=== LOAD COMPLETE ===', { loadedCount: items.length })
+        console.log('=== LOCAL LOAD COMPLETE ===', { loadedCount: items.length })
         resolve(items)
       }
       request.onerror = () => {
-        console.error('=== LOAD ERROR ===', request.error)
+        console.error('=== LOCAL LOAD ERROR ===', request.error)
         db.close()
         reject(request.error)
       }
     })
     return items
   } catch (error) {
-    console.error('=== LOAD FAILED ===', error)
+    console.error('=== LOCAL LOAD FAILED ===', error)
     throw error
   }
 }
@@ -125,7 +128,6 @@ const getStorageEstimate = async () => {
   return { used: 0, quota: 0 }
 }
 
-// Request persistent storage to prevent browser from clearing data
 const requestPersistentStorage = async () => {
   if (navigator.storage && navigator.storage.persist) {
     const isPersisted = await navigator.storage.persisted()
@@ -191,7 +193,6 @@ function App() {
   const [password, setPassword] = useState('')
   const [authError, setAuthError] = useState('')
 
-  // Use ref to track if initial load is complete (survives re-renders without triggering effects)
   const initialLoadDone = useRef(false)
 
   const [items, setItems] = useState([])
@@ -201,6 +202,8 @@ function App() {
   const [storageInfo, setStorageInfo] = useState({ used: 0, quota: 0 })
   const [isSaving, setIsSaving] = useState(false)
   const [viewingItem, setViewingItem] = useState(null)
+  const [cloudEnabled, setCloudEnabled] = useState(false)
+  const [syncStatus, setSyncStatus] = useState('checking') // checking, synced, syncing, offline
 
   // Show notification
   const showNotification = useCallback((message, type = 'info') => {
@@ -231,41 +234,70 @@ function App() {
     }
   }
 
-  // Load items from IndexedDB on mount
+  // Load items from cloud and/or IndexedDB on mount
   useEffect(() => {
     if (!isUnlocked) return
 
     const loadItems = async () => {
       try {
-        // Request persistent storage on mobile to prevent data loss
         await requestPersistentStorage()
 
-        // Try to load from IndexedDB first
-        const dbItems = await loadItemsFromDB()
-        if (dbItems.length > 0) {
-          setItems(dbItems)
+        // Check if Firebase is configured
+        const firebaseConfigured = checkFirebaseConfig()
+        setCloudEnabled(firebaseConfigured)
+
+        if (firebaseConfigured) {
+          setSyncStatus('syncing')
+          // Try to load from cloud first
+          const cloudItems = await loadItemsFromCloud()
+
+          if (cloudItems.length > 0) {
+            setItems(cloudItems)
+            // Also save to local for offline access
+            await saveItemsToDB(cloudItems)
+            setSyncStatus('synced')
+            showNotification('Synced from cloud!', 'success')
+          } else {
+            // No cloud data, try local
+            const dbItems = await loadItemsFromDB()
+            if (dbItems.length > 0) {
+              setItems(dbItems)
+              // Upload local data to cloud
+              for (const item of dbItems) {
+                await saveItemToCloud(item)
+              }
+              setSyncStatus('synced')
+              showNotification('Local data uploaded to cloud!', 'success')
+            }
+          }
         } else {
-          // Migrate from localStorage if exists
-          const savedItems = localStorage.getItem('myImportantItems')
-          if (savedItems) {
-            const parsed = safeJSONParse(savedItems, [])
-            setItems(parsed)
-            // Save to IndexedDB and clear localStorage
-            if (parsed.length > 0) {
-              await saveItemsToDB(parsed)
-              localStorage.removeItem('myImportantItems')
-              showNotification('Data migrated to new storage!', 'success')
+          setSyncStatus('offline')
+          // Fall back to local storage
+          const dbItems = await loadItemsFromDB()
+          if (dbItems.length > 0) {
+            setItems(dbItems)
+          } else {
+            // Migrate from localStorage if exists
+            const savedItems = localStorage.getItem('myImportantItems')
+            if (savedItems) {
+              const parsed = safeJSONParse(savedItems, [])
+              setItems(parsed)
+              if (parsed.length > 0) {
+                await saveItemsToDB(parsed)
+                localStorage.removeItem('myImportantItems')
+                showNotification('Data migrated to new storage!', 'success')
+              }
             }
           }
         }
-        // Update storage info
+
         const info = await getStorageEstimate()
         setStorageInfo(info)
       } catch (error) {
-        console.error('Error loading saved items:', error)
-        showNotification('Error loading saved items', 'error')
+        console.error('Error loading items:', error)
+        setSyncStatus('offline')
+        showNotification('Error loading items', 'error')
       } finally {
-        // Mark initial load as complete AFTER a small delay to ensure state is settled
         setTimeout(() => {
           initialLoadDone.current = true
         }, 100)
@@ -274,20 +306,37 @@ function App() {
     loadItems()
   }, [isUnlocked, showNotification])
 
-  // Helper function to save items - called explicitly after user actions
+  // Subscribe to real-time updates from cloud
+  useEffect(() => {
+    if (!isUnlocked || !cloudEnabled) return
+
+    const unsubscribe = subscribeToItems((cloudItems) => {
+      if (initialLoadDone.current) {
+        setItems(cloudItems)
+        setSyncStatus('synced')
+      }
+    })
+
+    return () => unsubscribe()
+  }, [isUnlocked, cloudEnabled])
+
+  // Helper function to save items - saves to both local and cloud
   const saveItems = useCallback(async (newItems) => {
     setIsSaving(true)
+    setSyncStatus('syncing')
     try {
       await saveItemsToDB(newItems)
       const info = await getStorageEstimate()
       setStorageInfo(info)
+      setSyncStatus(cloudEnabled ? 'synced' : 'offline')
     } catch (error) {
       console.error('Error saving items:', error)
+      setSyncStatus('offline')
       showNotification('Error saving items. Please try again.', 'error')
     } finally {
       setIsSaving(false)
     }
-  }, [showNotification])
+  }, [showNotification, cloudEnabled])
 
   // Validate file before upload
   const validateFile = (file) => {
@@ -313,6 +362,9 @@ function App() {
     const files = Array.from(e.target.files)
     if (files.length === 0) return
 
+    setIsSaving(true)
+    setSyncStatus('syncing')
+
     let currentItems = [...items]
 
     for (const file of files) {
@@ -337,18 +389,30 @@ function App() {
           createdAt: new Date().toISOString()
         }
 
-        // Add to current items
-        currentItems = [newItem, ...currentItems]
+        // Save to cloud if enabled
+        if (cloudEnabled) {
+          try {
+            const cloudItem = await saveItemToCloud(newItem)
+            // Use cloud item (has download URL instead of base64 for files)
+            currentItems = [cloudItem || newItem, ...currentItems]
+          } catch (cloudError) {
+            console.error('Cloud save failed, using local:', cloudError)
+            currentItems = [newItem, ...currentItems]
+          }
+        } else {
+          currentItems = [newItem, ...currentItems]
+        }
       } catch (error) {
         console.error('Upload error:', error)
         showNotification(`Error uploading "${file.name}"`, 'error')
       }
     }
 
-    // Update state and save all at once
     setItems(currentItems)
     await saveItems(currentItems)
     showNotification(`${files.length} file(s) uploaded!`, 'success')
+    setIsSaving(false)
+    setSyncStatus(cloudEnabled ? 'synced' : 'offline')
 
     e.target.value = ''
   }
@@ -378,6 +442,16 @@ function App() {
       important: false,
       createdAt: new Date().toISOString()
     }
+
+    // Save to cloud if enabled
+    if (cloudEnabled) {
+      try {
+        await saveItemToCloud(newItem)
+      } catch (cloudError) {
+        console.error('Cloud save failed:', cloudError)
+      }
+    }
+
     const newItems = [newItem, ...items]
     setItems(newItems)
     await saveItems(newItems)
@@ -389,15 +463,38 @@ function App() {
     const newItems = items.map(item =>
       item.id === id ? { ...item, important: !item.important } : item
     )
+
+    // Update in cloud if enabled
+    if (cloudEnabled) {
+      const updatedItem = newItems.find(item => item.id === id)
+      if (updatedItem) {
+        try {
+          await saveItemToCloud(updatedItem)
+        } catch (cloudError) {
+          console.error('Cloud update failed:', cloudError)
+        }
+      }
+    }
+
     setItems(newItems)
     await saveItems(newItems)
   }
 
   const deleteItem = async (id) => {
     if (window.confirm('Are you sure you want to delete this item?')) {
+      const itemToDelete = items.find(item => item.id === id)
+
+      // Delete from cloud if enabled
+      if (cloudEnabled && itemToDelete) {
+        try {
+          await deleteItemFromCloud(itemToDelete)
+        } catch (cloudError) {
+          console.error('Cloud delete failed:', cloudError)
+        }
+      }
+
       const newItems = items.filter(item => item.id !== id)
       setItems(newItems)
-      // Pass true to force saving even if empty (user explicitly deleted)
       await saveItemsToDB(newItems, true)
       showNotification('Item deleted', 'success')
     }
@@ -407,6 +504,14 @@ function App() {
     try {
       if (!item.data) {
         showNotification('File data not available. File may be corrupted.', 'error')
+        return
+      }
+
+      // Check if it's a cloud URL or base64
+      if (item.isCloudStored && item.data.startsWith('http')) {
+        // For cloud files, open in new tab or trigger download
+        window.open(item.data, '_blank')
+        showNotification('Opening file...', 'success')
         return
       }
 
@@ -458,6 +563,23 @@ function App() {
         return
       }
 
+      // For cloud stored files, share the URL
+      if (item.isCloudStored && item.data.startsWith('http')) {
+        if (navigator.share) {
+          await navigator.share({
+            title: item.name,
+            text: `Sharing: ${item.name}`,
+            url: item.data
+          })
+          showNotification('Shared successfully!', 'success')
+        } else {
+          // Copy URL to clipboard
+          await navigator.clipboard.writeText(item.data)
+          showNotification('Link copied to clipboard!', 'success')
+        }
+        return
+      }
+
       // Convert base64 to blob
       const parts = item.data.split(',')
       const byteString = atob(parts[1])
@@ -472,7 +594,6 @@ function App() {
       const blob = new Blob([ab], { type: mimeType })
       const file = new File([blob], item.name, { type: mimeType })
 
-      // Check if Web Share API is available and can share files
       if (navigator.share && navigator.canShare && navigator.canShare({ files: [file] })) {
         await navigator.share({
           files: [file],
@@ -481,14 +602,12 @@ function App() {
         })
         showNotification('Shared successfully!', 'success')
       } else if (navigator.share) {
-        // Share without file (just text/title)
         await navigator.share({
           title: item.name,
           text: `File: ${item.name} (${formatFileSize(item.size)})`
         })
         showNotification('Shared!', 'success')
       } else {
-        // Fallback: copy to clipboard or download
         showNotification('Share not supported. Use Download instead.', 'info')
         downloadFile(item)
       }
@@ -518,6 +637,26 @@ function App() {
     if (filter === 'notes') return item.type === 'note'
     return true
   })
+
+  const getSyncStatusText = () => {
+    switch (syncStatus) {
+      case 'synced': return 'Cloud synced'
+      case 'syncing': return 'Syncing...'
+      case 'checking': return 'Checking...'
+      case 'offline': return 'Local only'
+      default: return ''
+    }
+  }
+
+  const getSyncStatusColor = () => {
+    switch (syncStatus) {
+      case 'synced': return '#10b981'
+      case 'syncing': return '#f59e0b'
+      case 'checking': return '#6b7280'
+      case 'offline': return '#ef4444'
+      default: return '#6b7280'
+    }
+  }
 
   // Password screen
   if (!isUnlocked) {
@@ -564,8 +703,15 @@ function App() {
       )}
 
       <header className="header">
-        <h1>✨ Life Goes On ✨</h1>
+        <h1>Life Goes On</h1>
         <p>Store and organize everything important to you</p>
+        <div className="sync-status" style={{ color: getSyncStatusColor() }}>
+          <span className="sync-dot" style={{ backgroundColor: getSyncStatusColor() }}></span>
+          {getSyncStatusText()}
+          {!cloudEnabled && (
+            <span className="setup-hint"> - Setup Firebase for cloud sync</span>
+          )}
+        </div>
         {storageInfo.quota > 0 && (
           <div className="storage-indicator">
             <div className="storage-bar">
@@ -576,7 +722,7 @@ function App() {
             </div>
             <span className="storage-text">
               {formatFileSize(storageInfo.used)} / {formatFileSize(storageInfo.quota)} used
-              {isSaving && ' • Saving...'}
+              {isSaving && ' - Saving...'}
             </span>
           </div>
         )}
@@ -654,13 +800,16 @@ function App() {
                   {item.type === 'file' ? 'F' : 'N'}
                 </div>
                 <div className="item-actions">
+                  {item.isCloudStored && (
+                    <span className="cloud-badge" title="Stored in cloud">C</span>
+                  )}
                   <button
                     onClick={() => toggleImportant(item.id)}
                     className="action-btn"
                     title={item.important ? 'Remove from important' : 'Mark as important'}
                     aria-label={item.important ? 'Remove from important' : 'Mark as important'}
                   >
-                    {item.important ? '★' : '☆'}
+                    {item.important ? 'S' : 's'}
                   </button>
                   <button
                     onClick={() => deleteItem(item.id)}
@@ -682,7 +831,7 @@ function App() {
                   )}
                   <h3 className="item-title">{item.name}</h3>
                   <p className="file-info">
-                    {formatFileSize(item.size)} • {item.fileType || 'Unknown type'}
+                    {formatFileSize(item.size)} - {item.fileType || 'Unknown type'}
                   </p>
                   <div className="file-actions">
                     {isViewable(item.fileType) && (
@@ -732,7 +881,7 @@ function App() {
           <div className="viewer-container" onClick={(e) => e.stopPropagation()}>
             <div className="viewer-header">
               <h3>{viewingItem.name}</h3>
-              <button className="viewer-close" onClick={closeViewer}>✕</button>
+              <button className="viewer-close" onClick={closeViewer}>X</button>
             </div>
             <div className="viewer-content">
               {viewingItem.fileType?.startsWith('image/') ? (
