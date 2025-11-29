@@ -463,6 +463,55 @@ function App() {
     setViewingItem(null)
   }
 
+  const shareFile = async (item) => {
+    try {
+      if (!item.data) {
+        showNotification('File data not available', 'error')
+        return
+      }
+
+      // Convert base64 to blob
+      const parts = item.data.split(',')
+      const byteString = atob(parts[1])
+      const mimeType = parts[0].match(/:(.*?);/)?.[1] || item.fileType
+
+      const ab = new ArrayBuffer(byteString.length)
+      const ia = new Uint8Array(ab)
+      for (let i = 0; i < byteString.length; i++) {
+        ia[i] = byteString.charCodeAt(i)
+      }
+
+      const blob = new Blob([ab], { type: mimeType })
+      const file = new File([blob], item.name, { type: mimeType })
+
+      // Check if Web Share API is available and can share files
+      if (navigator.share && navigator.canShare && navigator.canShare({ files: [file] })) {
+        await navigator.share({
+          files: [file],
+          title: item.name,
+          text: `Sharing: ${item.name}`
+        })
+        showNotification('Shared successfully!', 'success')
+      } else if (navigator.share) {
+        // Share without file (just text/title)
+        await navigator.share({
+          title: item.name,
+          text: `File: ${item.name} (${formatFileSize(item.size)})`
+        })
+        showNotification('Shared!', 'success')
+      } else {
+        // Fallback: copy to clipboard or download
+        showNotification('Share not supported. Use Download instead.', 'info')
+        downloadFile(item)
+      }
+    } catch (error) {
+      if (error.name !== 'AbortError') {
+        console.error('Share error:', error)
+        showNotification('Error sharing file', 'error')
+      }
+    }
+  }
+
   const isViewable = (fileType) => {
     return fileType?.startsWith('image/') || fileType === 'application/pdf'
   }
@@ -731,6 +780,13 @@ function App() {
                       </button>
                     )}
                     <button
+                      onClick={() => shareFile(item)}
+                      className="share-btn"
+                      aria-label={`Share ${item.name}`}
+                    >
+                      📤 Share
+                    </button>
+                    <button
                       onClick={() => downloadFile(item)}
                       className="download-btn"
                       aria-label={`Download ${item.name}`}
@@ -773,6 +829,9 @@ function App() {
               )}
             </div>
             <div className="viewer-footer">
+              <button onClick={() => shareFile(viewingItem)} className="share-btn">
+                📤 Share
+              </button>
               <button onClick={() => downloadFile(viewingItem)} className="download-btn">
                 ⬇️ Download
               </button>

@@ -493,6 +493,28 @@ body {
   transform: translateY(0);
 }
 
+.share-btn {
+  padding: 10px 20px;
+  background: linear-gradient(135deg, #8b5cf6 0%, #7c3aed 100%);
+  color: white;
+  border: none;
+  border-radius: 10px;
+  cursor: pointer;
+  font-weight: 600;
+  font-size: 0.95rem;
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  box-shadow: 0 4px 12px rgba(139, 92, 246, 0.3);
+}
+
+.share-btn:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 20px rgba(139, 92, 246, 0.4);
+}
+
+.share-btn:active {
+  transform: translateY(0);
+}
+
 .download-btn {
   padding: 10px 20px;
   background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
@@ -731,6 +753,7 @@ body {
   .add-button,
   .filter-btn,
   .download-btn,
+  .share-btn,
   .view-btn,
   .action-btn {
     min-height: 48px;
@@ -754,6 +777,7 @@ body {
   .add-button:active,
   .filter-btn:active,
   .download-btn:active,
+  .share-btn:active,
   .view-btn:active {
     transform: scale(0.95);
   }
@@ -764,6 +788,7 @@ body {
 .add-button:focus-visible,
 .filter-btn:focus-visible,
 .download-btn:focus-visible,
+.share-btn:focus-visible,
 .view-btn:focus-visible,
 .action-btn:focus-visible,
 .note-input:focus-visible {
