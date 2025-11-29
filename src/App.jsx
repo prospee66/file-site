@@ -142,6 +142,7 @@ function App() {
   const [isUnlocked, setIsUnlocked] = useState(false)
   const [password, setPassword] = useState('')
   const [authError, setAuthError] = useState('')
+  const [hasLoaded, setHasLoaded] = useState(false)
 
   const [items, setItems] = useState([])
   const [noteText, setNoteText] = useState('')
@@ -207,35 +208,38 @@ function App() {
         // Update storage info
         const info = await getStorageEstimate()
         setStorageInfo(info)
+        // Mark as loaded so save effect can run
+        setHasLoaded(true)
       } catch (error) {
         console.error('Error loading saved items:', error)
         showNotification('Error loading saved items', 'error')
+        setHasLoaded(true) // Still mark as loaded to allow new items
       }
     }
     loadItems()
   }, [isUnlocked, showNotification])
 
-  // Save items to IndexedDB
+  // Save items to IndexedDB (only after initial load is complete)
   useEffect(() => {
-    if (items.length >= 0) {
-      const saveItems = async () => {
-        setIsSaving(true)
-        try {
-          await saveItemsToDB(items)
-          const info = await getStorageEstimate()
-          setStorageInfo(info)
-        } catch (error) {
-          console.error('Error saving items:', error)
-          showNotification('Error saving items. Please try again.', 'error')
-        } finally {
-          setIsSaving(false)
-        }
+    if (!hasLoaded || !isUnlocked) return
+
+    const saveItems = async () => {
+      setIsSaving(true)
+      try {
+        await saveItemsToDB(items)
+        const info = await getStorageEstimate()
+        setStorageInfo(info)
+      } catch (error) {
+        console.error('Error saving items:', error)
+        showNotification('Error saving items. Please try again.', 'error')
+      } finally {
+        setIsSaving(false)
       }
-      // Debounce saving to avoid too many writes
-      const timeoutId = setTimeout(saveItems, 500)
-      return () => clearTimeout(timeoutId)
     }
-  }, [items, showNotification])
+    // Debounce saving to avoid too many writes
+    const timeoutId = setTimeout(saveItems, 500)
+    return () => clearTimeout(timeoutId)
+  }, [items, hasLoaded, isUnlocked, showNotification])
 
   // Validate file before upload
   const validateFile = (file) => {
