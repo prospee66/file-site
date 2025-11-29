@@ -32,68 +32,86 @@ const openDatabase = () => {
 }
 
 const saveItemsToDB = async (items, forceEmpty = false) => {
-  const db = await openDatabase()
+  console.log('=== SAVING TO DB ===', { itemCount: items.length, forceEmpty })
 
-  // Safety check: if trying to save empty array, verify there's no existing data first
-  if (items.length === 0 && !forceEmpty) {
-    const existingCount = await new Promise((resolve) => {
-      const transaction = db.transaction([STORE_NAME], 'readonly')
+  try {
+    const db = await openDatabase()
+
+    // Safety check: if trying to save empty array, verify there's no existing data first
+    if (items.length === 0 && !forceEmpty) {
+      const existingCount = await new Promise((resolve) => {
+        const transaction = db.transaction([STORE_NAME], 'readonly')
+        const store = transaction.objectStore(STORE_NAME)
+        const countRequest = store.count()
+        countRequest.onsuccess = () => resolve(countRequest.result)
+        countRequest.onerror = () => resolve(0)
+      })
+
+      // Don't overwrite existing data with empty array
+      if (existingCount > 0) {
+        console.log('Prevented saving empty array over existing data')
+        db.close()
+        return
+      }
+    }
+
+    await new Promise((resolve, reject) => {
+      const transaction = db.transaction([STORE_NAME], 'readwrite')
       const store = transaction.objectStore(STORE_NAME)
-      const countRequest = store.count()
-      countRequest.onsuccess = () => resolve(countRequest.result)
-      countRequest.onerror = () => resolve(0)
+
+      // Clear existing items and add new ones
+      const clearRequest = store.clear()
+
+      clearRequest.onsuccess = () => {
+        items.forEach(item => store.add(item))
+      }
+
+      transaction.oncomplete = () => {
+        console.log('=== SAVE COMPLETE ===', { savedCount: items.length })
+        db.close()
+        resolve()
+      }
+      transaction.onerror = () => {
+        console.error('=== SAVE ERROR ===', transaction.error)
+        db.close()
+        reject(transaction.error)
+      }
     })
-
-    // Don't overwrite existing data with empty array
-    if (existingCount > 0) {
-      console.log('Prevented saving empty array over existing data')
-      db.close()
-      return
-    }
+  } catch (error) {
+    console.error('=== SAVE FAILED ===', error)
+    throw error
   }
-
-  return new Promise((resolve, reject) => {
-    const transaction = db.transaction([STORE_NAME], 'readwrite')
-    const store = transaction.objectStore(STORE_NAME)
-
-    // Clear existing items and add new ones
-    const clearRequest = store.clear()
-
-    clearRequest.onsuccess = () => {
-      items.forEach(item => store.add(item))
-    }
-
-    transaction.oncomplete = () => {
-      db.close()
-      resolve()
-    }
-    transaction.onerror = () => {
-      db.close()
-      reject(transaction.error)
-    }
-  })
 }
 
 const loadItemsFromDB = async () => {
-  const db = await openDatabase()
-  return new Promise((resolve, reject) => {
-    const transaction = db.transaction([STORE_NAME], 'readonly')
-    const store = transaction.objectStore(STORE_NAME)
-    const request = store.getAll()
+  console.log('=== LOADING FROM DB ===')
+  try {
+    const db = await openDatabase()
+    const items = await new Promise((resolve, reject) => {
+      const transaction = db.transaction([STORE_NAME], 'readonly')
+      const store = transaction.objectStore(STORE_NAME)
+      const request = store.getAll()
 
-    request.onsuccess = () => {
-      db.close()
-      // Sort by createdAt descending (newest first)
-      const items = request.result.sort((a, b) =>
-        new Date(b.createdAt) - new Date(a.createdAt)
-      )
-      resolve(items)
-    }
-    request.onerror = () => {
-      db.close()
-      reject(request.error)
-    }
-  })
+      request.onsuccess = () => {
+        db.close()
+        // Sort by createdAt descending (newest first)
+        const items = request.result.sort((a, b) =>
+          new Date(b.createdAt) - new Date(a.createdAt)
+        )
+        console.log('=== LOAD COMPLETE ===', { loadedCount: items.length })
+        resolve(items)
+      }
+      request.onerror = () => {
+        console.error('=== LOAD ERROR ===', request.error)
+        db.close()
+        reject(request.error)
+      }
+    })
+    return items
+  } catch (error) {
+    console.error('=== LOAD FAILED ===', error)
+    throw error
+  }
 }
 
 const getStorageEstimate = async () => {
@@ -277,49 +295,51 @@ function App() {
     return true
   }
 
-  const handleFileUpload = (e) => {
+  const handleFileUpload = async (e) => {
     const files = Array.from(e.target.files)
-    let uploadedCount = 0
+    if (files.length === 0) return
 
-    files.forEach(file => {
-      if (!validateFile(file)) return
+    let currentItems = [...items]
 
-      const reader = new FileReader()
+    for (const file of files) {
+      if (!validateFile(file)) continue
 
-      reader.onerror = () => {
-        showNotification(`Error reading file "${file.name}"`, 'error')
-      }
+      try {
+        const data = await new Promise((resolve, reject) => {
+          const reader = new FileReader()
+          reader.onload = (event) => resolve(event.target.result)
+          reader.onerror = () => reject(new Error('Failed to read file'))
+          reader.readAsDataURL(file)
+        })
 
-      reader.onload = (event) => {
         const newItem = {
           id: generateId(),
           type: 'file',
           name: sanitizeText(file.name),
           size: file.size,
           fileType: file.type || 'application/octet-stream',
-          data: event.target.result,
+          data: data,
           important: false,
           createdAt: new Date().toISOString()
         }
-        setItems(prev => {
-          const newItems = [newItem, ...prev]
-          // Save immediately after adding
-          saveItems(newItems)
-          return newItems
-        })
-        uploadedCount++
-        if (uploadedCount === files.length) {
-          showNotification(`${uploadedCount} file(s) uploaded successfully!`, 'success')
-        }
-      }
 
-      reader.readAsDataURL(file)
-    })
+        // Add to current items
+        currentItems = [newItem, ...currentItems]
+      } catch (error) {
+        console.error('Upload error:', error)
+        showNotification(`Error uploading "${file.name}"`, 'error')
+      }
+    }
+
+    // Update state and save all at once
+    setItems(currentItems)
+    await saveItems(currentItems)
+    showNotification(`${files.length} file(s) uploaded!`, 'success')
 
     e.target.value = ''
   }
 
-  const handleAddNote = () => {
+  const handleAddNote = async () => {
     const trimmedNote = noteText.trim()
 
     if (!trimmedNote) {
@@ -344,33 +364,27 @@ function App() {
       important: false,
       createdAt: new Date().toISOString()
     }
-    setItems(prev => {
-      const newItems = [newItem, ...prev]
-      saveItems(newItems)
-      return newItems
-    })
+    const newItems = [newItem, ...items]
+    setItems(newItems)
+    await saveItems(newItems)
     setNoteText('')
     showNotification('Note added successfully!', 'success')
   }
 
-  const toggleImportant = (id) => {
-    setItems(prev => {
-      const newItems = prev.map(item =>
-        item.id === id ? { ...item, important: !item.important } : item
-      )
-      saveItems(newItems)
-      return newItems
-    })
+  const toggleImportant = async (id) => {
+    const newItems = items.map(item =>
+      item.id === id ? { ...item, important: !item.important } : item
+    )
+    setItems(newItems)
+    await saveItems(newItems)
   }
 
-  const deleteItem = (id) => {
+  const deleteItem = async (id) => {
     if (window.confirm('Are you sure you want to delete this item?')) {
-      setItems(prev => {
-        const newItems = prev.filter(item => item.id !== id)
-        // Pass true to force saving even if empty (user explicitly deleted)
-        saveItemsToDB(newItems, true)
-        return newItems
-      })
+      const newItems = items.filter(item => item.id !== id)
+      setItems(newItems)
+      // Pass true to force saving even if empty (user explicitly deleted)
+      await saveItemsToDB(newItems, true)
       showNotification('Item deleted', 'success')
     }
   }
