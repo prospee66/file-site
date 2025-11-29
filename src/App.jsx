@@ -6,6 +6,9 @@ const MAX_FILE_SIZE = 10 * 1024 * 1024 // 10MB limit
 const MAX_NOTE_LENGTH = 5000
 const MAX_ITEMS = 500 // Increased limit with IndexedDB
 
+// Secret password (hardcoded for reliability)
+const SECRET_PASSWORD = 'prospee123@'
+
 // IndexedDB configuration
 const DB_NAME = 'LifeGoesOnDB'
 const DB_VERSION = 1
@@ -136,6 +139,10 @@ const safeJSONParse = (data, fallback = []) => {
 }
 
 function App() {
+  const [isUnlocked, setIsUnlocked] = useState(false)
+  const [password, setPassword] = useState('')
+  const [authError, setAuthError] = useState('')
+
   const [items, setItems] = useState([])
   const [noteText, setNoteText] = useState('')
   const [filter, setFilter] = useState('all')
@@ -150,8 +157,33 @@ function App() {
     setTimeout(() => setNotification(null), 3000)
   }, [])
 
+  // Check if already unlocked this session
+  useEffect(() => {
+    const unlocked = sessionStorage.getItem('lifeGoesOnUnlocked')
+    if (unlocked === 'true') {
+      setIsUnlocked(true)
+    }
+  }, [])
+
+  // Handle password submit
+  const handleUnlock = (e) => {
+    e.preventDefault()
+    setAuthError('')
+
+    if (password === SECRET_PASSWORD) {
+      sessionStorage.setItem('lifeGoesOnUnlocked', 'true')
+      setIsUnlocked(true)
+      setPassword('')
+      showNotification('Welcome back!', 'success')
+    } else {
+      setAuthError('Incorrect password')
+    }
+  }
+
   // Load items from IndexedDB on mount
   useEffect(() => {
+    if (!isUnlocked) return
+
     const loadItems = async () => {
       try {
         // Try to load from IndexedDB first
@@ -181,7 +213,7 @@ function App() {
       }
     }
     loadItems()
-  }, [showNotification])
+  }, [isUnlocked, showNotification])
 
   // Save items to IndexedDB
   useEffect(() => {
@@ -421,7 +453,42 @@ function App() {
     return true
   })
 
-  // Main app - no authentication needed
+  // Password screen
+  if (!isUnlocked) {
+    return (
+      <div className="app">
+        <div className="auth-container">
+          <div className="auth-card">
+            <h1 className="auth-title">Life Goes On</h1>
+            <p className="auth-subtitle">Enter your secret password</p>
+
+            <form onSubmit={handleUnlock} className="auth-form">
+              <div className="input-group">
+                <label htmlFor="password">Password</label>
+                <input
+                  id="password"
+                  type="password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  placeholder="Enter password"
+                  autoComplete="current-password"
+                  autoFocus
+                />
+              </div>
+
+              {authError && <p className="auth-error">{authError}</p>}
+
+              <button type="submit" className="auth-button">
+                Unlock
+              </button>
+            </form>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  // Main app
   return (
     <div className="app">
       {notification && (
